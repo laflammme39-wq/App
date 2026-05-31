@@ -1,0 +1,3 @@
+node_modules/
+pouches.db
+*.db-journal
