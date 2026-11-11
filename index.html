@@ -775,6 +775,17 @@ button { cursor: pointer; }
   border-radius: 6px;
 }
 .link-btn:hover { background: var(--accent-soft); }
+.link-btn.small { padding: 2px 4px; font-size: 12px; }
+.new-pouch {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border: 1px dashed #c8cfda;
+  border-radius: 10px;
+  background: var(--bg);
+}
+.new-pouch-title { font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
 
 /* Fields */
 .field { display: flex; flex-direction: column; gap: 6px; border: 0; min-width: 0; }
@@ -1197,6 +1208,7 @@ const KEYS = {
   style: 'pm_mapstyle_v2',
   name: 'pm_name_v1',
   lastProd: 'pm_lastprod_v1',
+  customProducts: 'pm_products_custom_v1',
 };
 function load(key, fallback) {
   try { const v = localStorage.getItem(key); return v == null ? fallback : JSON.parse(v); }
@@ -1207,8 +1219,8 @@ function save(key, value) {
 }
 
 // ── Catalog ──────────────────────────────────────────────────────
-const PRODUCTS = [
-  { id: 1,  brand: 'ZYN',     flavor: 'Cool Mint',    strength: '3mg' },
+const BUILT_IN_PRODUCTS = [
+  { id: 1,  brand: 'ZYN',    flavor: 'Cool Mint',    strength: '3mg' },
   { id: 2,  brand: 'ZYN',     flavor: 'Cool Mint',    strength: '6mg' },
   { id: 3,  brand: 'ZYN',     flavor: 'Citrus',       strength: '3mg' },
   { id: 4,  brand: 'ZYN',     flavor: 'Citrus',       strength: '6mg' },
@@ -1232,7 +1244,34 @@ const PRODUCTS = [
   { id: 22, brand: 'Grizzly', flavor: 'Wintergreen',  strength: '4mg' },
   { id: 23, brand: 'Grizzly', flavor: 'Mint',         strength: '4mg' },
 ];
-const PROD = new Map(PRODUCTS.map(p => [p.id, p]));
+// Pouches people add themselves are kept separately and merged into the catalog
+let customProducts = load(KEYS.customProducts, []);
+if (!Array.isArray(customProducts)) customProducts = [];
+let PRODUCTS = [], PROD = new Map();
+function rebuildCatalog() {
+  PRODUCTS = [...BUILT_IN_PRODUCTS, ...customProducts];
+  PROD = new Map(PRODUCTS.map(p => [p.id, p]));
+}
+rebuildCatalog();
+
+const cleanText = s => s.trim().replace(/\s+/g, ' ');
+function normStrength(s) {
+  s = cleanText(s);
+  const m = s.match(/^(\d+(?:\.\d+)?)\s*(mg)?$/i);
+  return m ? `${m[1]}mg` : s;
+}
+function addProduct({ brand, flavor, strength }) {
+  const same = (a, b) => a.toLowerCase() === b.toLowerCase();
+  brand = (PRODUCTS.find(p => same(p.brand, brand)) || { brand }).brand;
+  const existing = PRODUCTS.find(p => same(p.brand, brand) && same(p.flavor, flavor) && same(p.strength, strength));
+  if (existing) return { id: existing.id, existed: true };
+  const p = { id: Math.max(1000, ...PRODUCTS.map(x => x.id)) + 1, brand, flavor, strength, custom: true };
+  customProducts.push(p);
+  save(KEYS.customProducts, customProducts);
+  rebuildCatalog();
+  renderFilterOptions();
+  return { id: p.id, existed: false };
+}
 const TYPES = {
   gas_station:       { label: 'Gas station',       color: 'var(--gas)' },
   convenience_store: { label: 'Convenience store', color: 'var(--conv)' },
@@ -1544,8 +1583,29 @@ function renderStore() {
       <h3>Add a price</h3>
       <form id="price-form" class="form" novalidate>
         <div class="field">
-          <label for="pf-product">Product</label>
-          <select id="pf-product">${productOptions(defaultProd, false)}</select>
+          <div class="label-row">
+            <label for="pf-product">Product</label>
+            <button class="link-btn small" type="button" data-act="new-pouch">Pouch not listed?</button>
+          </div>
+          <select id="pf-product">${productOptions(defaultProd, false)}<option value="new">+ Add a new pouch…</option></select>
+        </div>
+        <div class="new-pouch" id="new-pouch" hidden>
+          <p class="new-pouch-title">New pouch</p>
+          <div class="field">
+            <label for="np-brand">Brand</label>
+            <input id="np-brand" type="text" list="brand-list" maxlength="30" placeholder="e.g. ZYN" autocomplete="off">
+            <datalist id="brand-list">${[...new Set(PRODUCTS.map(p => p.brand))].map(b => `<option value="${esc(b)}">`).join('')}</datalist>
+          </div>
+          <div class="field-row">
+            <div class="field">
+              <label for="np-flavor">Flavor</label>
+              <input id="np-flavor" type="text" maxlength="40" placeholder="e.g. Peppermint" autocomplete="off">
+            </div>
+            <div class="field">
+              <label for="np-strength">Strength</label>
+              <input id="np-strength" type="text" maxlength="12" placeholder="e.g. 6mg" autocomplete="off">
+            </div>
+          </div>
         </div>
         <div class="field-row">
           <div class="field">
@@ -1593,31 +1653,67 @@ $('#view-store').addEventListener('click', e => {
     case 'zoom': if (s) map.flyTo([s.lat, s.lng], 18, { animate: !reduceMotion }); break;
     case 'remove-price': removePrice(+b.dataset.id); break;
     case 'delete': deleteStore(currentId); break;
+    case 'new-pouch': $('#pf-product').value = 'new'; toggleNewPouch(true); break;
   }
 });
+$('#view-store').addEventListener('input', () => {
+  const err = $('#pf-error');
+  if (err) err.hidden = true;
+});
+$('#view-store').addEventListener('change', e => {
+  if (e.target.id === 'pf-product') toggleNewPouch(e.target.value === 'new');
+});
+function toggleNewPouch(on) {
+  $('#new-pouch').hidden = !on;
+  $('#pf-error').hidden = true;
+  if (on) $('#np-brand').focus();
+}
 $('#view-store').addEventListener('submit', e => {
   e.preventDefault();
   if (e.target.id === 'price-form') submitPrice();
 });
 
 function submitPrice() {
-  const prodId = +$('#pf-product').value;
+  const choice = $('#pf-product').value;
   const price = parseFloat($('#pf-price').value);
   const user = $('#pf-name').value.trim();
-  const err = $('#pf-error');
-  if (!(price > 0 && price < 100)) {
-    err.textContent = 'Enter the price for one can, like 5.49.';
+  const fail = (msg, input) => {
+    const err = $('#pf-error');
+    err.textContent = msg;
     err.hidden = false;
-    $('#pf-price').focus();
-    return;
+    input.focus();
+  };
+  let newPouch = null;
+  if (choice === 'new') {
+    newPouch = {
+      brand: cleanText($('#np-brand').value),
+      flavor: cleanText($('#np-flavor').value),
+      strength: normStrength($('#np-strength').value),
+    };
+    if (!newPouch.brand) return fail('Enter the brand of the new pouch, like ZYN.', $('#np-brand'));
+    if (!newPouch.flavor) return fail('Enter the flavor, like Peppermint.', $('#np-flavor'));
+    if (!newPouch.strength) return fail('Enter the strength, like 6mg.', $('#np-strength'));
   }
+  if (!(price > 0 && price < 100)) return fail('Enter the price for one can, like 5.49.', $('#pf-price'));
+
+  let prodId = +choice;
+  let message;
   const rounded = Math.round(price * 100) / 100;
+  if (newPouch) {
+    const added = addProduct(newPouch);
+    prodId = added.id;
+    message = added.existed
+      ? `${prodName(prodId)} was already listed. Saved ${money(rounded)} for it.`
+      : `Added ${prodName(prodId)} and saved ${money(rounded)}`;
+  } else {
+    message = `Saved ${money(rounded)} for ${prodName(prodId)}`;
+  }
   prices.push({ id: nextId(prices), locId: currentId, prodId, price: rounded, user: user || 'Anonymous', at: new Date().toISOString() });
   persist();
   save(KEYS.name, user);
   save(KEYS.lastProd, prodId);
   refresh();
-  toast(`Saved ${money(rounded)} for ${prodName(prodId)}`);
+  toast(message);
 }
 
 function removePrice(priceId) {
@@ -1850,7 +1946,10 @@ function locate() {
 }
 
 // ── Filters ──────────────────────────────────────────────────────
-$('#f-product').innerHTML = productOptions(0, true);
+function renderFilterOptions() {
+  $('#f-product').innerHTML = productOptions(filters.product, true);
+}
+renderFilterOptions();
 $('#f-product').onchange = e => { filters.product = +e.target.value; refresh(); };
 $('#f-max').oninput = e => {
   const v = +e.target.value;
