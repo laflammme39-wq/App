@@ -924,7 +924,14 @@ input[type=range] {
   width: 100%; height: 100%;
   background: var(--bg);
 }
-.leaflet-tile-pane { filter: brightness(1.15); }
+/* Leaflet's own icon is a separate image file, so draw the map-style button inline */
+.leaflet-control-layers-toggle,
+.leaflet-retina .leaflet-control-layers-toggle {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23333' stroke-width='2' stroke-linejoin='round'%3E%3Cpath d='M12 3 2 8l10 5 10-5-10-5z'/%3E%3Cpath d='m2 13 10 5 10-5'/%3E%3Cpath d='m2 18 10 5 10-5'/%3E%3C/svg%3E");
+  background-size: 22px 22px;
+}
+.leaflet-control-layers { color-scheme: light; }
+.leaflet-control-layers-expanded { color: #222; font-size: 13px; }
 .leaflet-container { font-family: inherit; }
 .leaflet-popup-content-wrapper {
   background: var(--surface);
@@ -1322,6 +1329,7 @@ input[type=range] {
 const LOCS_KEY = 'pm_locs_v1';
 const PRICES_KEY = 'pm_prices_v1';
 const PRODS_KEY = 'pm_products_v1';
+const MAP_STYLE_KEY = 'pm_mapstyle_v1';
 
 function load(k, def) {
   try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : def; }
@@ -1405,17 +1413,19 @@ let map, markerLayer = {}, activeLocId = null, addingPin = false;
 function initMap() {
   const center = locs.length ? [locs[0].lat, locs[0].lng] : [40.73, -73.99];
   map = L.map('map', { zoomControl: false }).setView(center, 13);
-  const carto = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-    attribution: '© OpenStreetMap © CARTO', subdomains: 'abcd', maxZoom: 20
-  }).addTo(map);
-  let tileErrors = 0;
-  carto.on('tileerror', () => {
-    if (++tileErrors !== 3) return;
-    map.removeLayer(carto);
-    L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}', {
-      attribution: 'Tiles © Esri', maxZoom: 16
-    }).addTo(map);
-  });
+  const esri = 'https://server.arcgisonline.com/ArcGIS/rest/services/';
+  const esriOpts = { attribution: 'Tiles © Esri', maxZoom: 19, maxNativeZoom: 16 };
+  const baseMaps = {
+    'Dark': L.layerGroup([
+      L.tileLayer(esri + 'Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}', esriOpts),
+      L.tileLayer(esri + 'Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}', esriOpts),
+    ]),
+    'Streets': L.tileLayer(esri + 'World_Street_Map/MapServer/tile/{z}/{y}/{x}', { attribution: 'Tiles © Esri', maxZoom: 19 }),
+    'OpenStreetMap': L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap contributors', maxZoom: 19 }),
+  };
+  (baseMaps[load(MAP_STYLE_KEY, 'Dark')] || baseMaps.Dark).addTo(map);
+  L.control.layers(baseMaps, null, { position: 'topright' }).addTo(map);
+  map.on('baselayerchange', e => save(MAP_STYLE_KEY, e.name));
   L.control.zoom({ position: 'topright' }).addTo(map);
   map.on('click', onMapClick);
 }
