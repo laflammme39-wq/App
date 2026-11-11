@@ -1459,6 +1459,62 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
 #map-wrap { flex: 1; min-width: 0; position: relative; }
 #map { position: absolute; inset: 0; background: #ecebe8; }
 .adding .leaflet-container, .adding .leaflet-grab { cursor: crosshair; }
+/* Location search on the map */
+.place-search {
+  position: absolute;
+  top: 12px; left: 12px;
+  z-index: 1000;
+  width: min(380px, calc(100% - 84px));
+}
+.adding .place-search { display: none; }
+.place-bar {
+  display: flex; align-items: center; gap: 4px;
+  height: 46px;
+  padding: 0 5px 0 12px;
+  background: var(--surface);
+  border-radius: 10px;
+  box-shadow: 0 1px 6px rgba(21, 24, 30, .25);
+}
+.place-bar:focus-within { box-shadow: 0 0 0 2px var(--accent), 0 1px 6px rgba(21, 24, 30, .25); }
+.place-ico { width: 18px; height: 18px; flex-shrink: 0; fill: none; stroke: var(--muted); stroke-width: 2; stroke-linejoin: round; }
+.place-bar input[type=text] {
+  flex: 1;
+  height: 100%;
+  padding: 0 6px;
+  border: 0;
+  background: none;
+  box-shadow: none;
+  font-size: 14px;
+}
+#place-clear {
+  width: 30px; height: 30px; flex-shrink: 0;
+  border: 0; border-radius: 6px;
+  background: none;
+  color: var(--muted);
+  font-size: 20px; line-height: 1;
+}
+#place-clear:hover { background: var(--bg); color: var(--ink); }
+#place-go { height: 36px; padding: 0 14px; }
+.place-results {
+  margin-top: 6px;
+  padding: 6px;
+  list-style: none;
+  background: var(--surface);
+  border-radius: 10px;
+  box-shadow: 0 6px 20px rgba(21, 24, 30, .2);
+}
+.place-results button {
+  width: 100%;
+  padding: 9px 10px;
+  border: 0; border-radius: 7px;
+  background: none;
+  text-align: left;
+  font-size: 14px;
+}
+.place-results button:hover { background: var(--accent-soft); }
+.place-head { padding: 6px 10px 4px; font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.place-msg { padding: 9px 10px; color: var(--muted); line-height: 1.45; }
+
 #banner {
   position: absolute;
   top: 12px; left: 50%;
@@ -1746,6 +1802,16 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
 
 <main id="map-wrap">
   <div id="map"></div>
+  <form id="place-form" class="place-search" role="search" novalidate>
+    <div class="place-bar">
+      <svg class="place-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s-7-6.2-7-11.5a7 7 0 0 1 14 0C19 14.8 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.5"/></svg>
+      <input id="place-q" type="text" placeholder="Search city, town, state or ZIP" aria-label="Search for a city, town, state or ZIP code"
+             autocomplete="off" spellcheck="false" enterkeyhint="search">
+      <button id="place-clear" type="button" aria-label="Clear location search" title="Clear" hidden>×</button>
+      <button id="place-go" class="btn btn-primary" type="submit">Go</button>
+    </div>
+    <ul id="place-results" class="place-results" hidden></ul>
+  </form>
   <div id="banner" hidden>
     <span id="banner-text">Click the map where the store is</span>
     <button type="button" id="banner-cancel">Cancel</button>
@@ -2549,6 +2615,8 @@ function getLocation(onOk) {
   toast('Finding your location…');
   navigator.geolocation.getCurrentPosition(pos => {
     me = [pos.coords.latitude, pos.coords.longitude];
+    originLabel = 'you';
+    updateSortLabel();
     if (!meMarker) {
       meMarker = L.circleMarker(me, { radius: 8, weight: 3, color: '#ffffff', fillColor: '#0b63ce', fillOpacity: 1, interactive: false }).addTo(map);
     } else {
@@ -2568,6 +2636,125 @@ function locate() {
     hideToast();
   });
 }
+
+// ── Location search: city, town, state or ZIP (US only) ──────────
+// "me" is the point the list measures distance from: your location, or the last place searched.
+let originLabel = '';
+function updateSortLabel() {
+  $('#f-sort option[value="near"]').textContent = me && originLabel ? `Closest to ${originLabel}` : 'Closest';
+}
+function osmPlace(x) {
+  const a = x.address || {};
+  const name = x.name || a.city || a.town || a.village || a.postcode || a.state || x.display_name.split(',')[0];
+  const town = x.type === 'postcode' ? (a.city || a.town || a.village || a.hamlet || '') : '';
+  const state = a.state && a.state !== name ? a.state : '';
+  const box = (x.boundingbox || []).map(Number);
+  return {
+    lat: +x.lat,
+    lng: +x.lon,
+    label: [name, town, state].filter(Boolean).join(', '),
+    short: name,
+    bounds: box.length === 4 ? [[box[0], box[2]], [box[1], box[3]]] : null,
+    isPlace: x.category === 'place' || x.category === 'boundary',
+  };
+}
+async function geocodePlace(q) {
+  const zip = q.match(/^(\d{5})(-\d{4})?$/);
+  let osmFailed = false;
+  try {
+    const params = new URLSearchParams({ format: 'jsonv2', addressdetails: '1', limit: '6', countrycodes: 'us' });
+    if (zip) params.set('postalcode', zip[1]); else params.set('q', q);
+    const data = await fetchJson('https://nominatim.openstreetmap.org/search?' + params);
+    let hits = (Array.isArray(data) ? data : []).map(osmPlace);
+    if (hits.some(h => h.isPlace)) hits = hits.filter(h => h.isPlace);
+    if (hits.length) return hits;
+  } catch {
+    osmFailed = true;
+  }
+  try {
+    const params = new URLSearchParams({ SingleLine: q, f: 'json', maxLocations: '6', countryCode: 'USA' });
+    const data = await fetchJson('https://geocode.arcgis.com/arcgis/rest/services/World/GeocodeServer/findAddressCandidates?' + params);
+    return (data.candidates || []).filter(c => c.score >= 80).map(c => ({
+      lat: c.location.y,
+      lng: c.location.x,
+      label: c.address,
+      short: c.address.split(',')[0],
+      bounds: c.extent ? [[c.extent.ymin, c.extent.xmin], [c.extent.ymax, c.extent.xmax]] : null,
+    }));
+  } catch (err) {
+    if (osmFailed) throw err;
+    return [];
+  }
+}
+function goToPlace(hit) {
+  $('#place-q').value = hit.label;
+  $('#place-clear').hidden = false;
+  if (hit.bounds) map.fitBounds(hit.bounds, { padding: [40, 40], maxZoom: 14, animate: !reduceMotion });
+  else map.flyTo([hit.lat, hit.lng], 12, { animate: !reduceMotion });
+  me = [hit.lat, hit.lng];
+  originLabel = hit.short;
+  filters.sort = 'near';
+  $('#f-sort').value = 'near';
+  updateSortLabel();
+  refresh();
+  const area = hit.bounds ? L.latLngBounds(hit.bounds).pad(0.15) : L.latLng(hit.lat, hit.lng).toBounds(16000);
+  const n = visible().filter(v => area.contains([v.s.lat, v.s.lng])).length;
+  toast(n
+    ? `${n} store${n === 1 ? '' : 's'} in ${hit.label}`
+    : `No stores in ${hit.label} yet. Use + Add store to add one.`, null, 4500);
+}
+function showPlaceMessage(msg) {
+  const list = $('#place-results');
+  list.innerHTML = `<li class="place-msg">${esc(msg)}</li>`;
+  list.hidden = false;
+}
+$('#place-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const q = $('#place-q').value.trim();
+  const list = $('#place-results');
+  if (!q) { $('#place-q').focus(); return; }
+  const btn = $('#place-go');
+  btn.disabled = true;
+  btn.textContent = '…';
+  list.hidden = true;
+  try {
+    const seen = new Set();
+    const hits = (await geocodePlace(q)).filter(h => !seen.has(h.label) && seen.add(h.label));
+    if (!hits.length) {
+      showPlaceMessage(`Couldn't find “${q}”. Try a city and state, like Austin, TX, or a 5-digit ZIP code.`);
+      return;
+    }
+    goToPlace(hits[0]);
+    const others = hits.slice(1, 5);
+    if (others.length) {
+      list.innerHTML = '<li class="place-head">Other matches</li>' +
+        others.map((h, i) => `<li><button type="button" data-i="${i}">${esc(h.label)}</button></li>`).join('');
+      list.querySelectorAll('button').forEach(b => {
+        b.onclick = () => { list.hidden = true; goToPlace(others[+b.dataset.i]); };
+      });
+      list.hidden = false;
+    }
+  } catch {
+    showPlaceMessage("Couldn't reach the location search. Check your internet connection and try again.");
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Go';
+  }
+});
+$('#place-q').addEventListener('input', () => {
+  $('#place-results').hidden = true;
+  $('#place-clear').hidden = !$('#place-q').value;
+});
+$('#place-q').addEventListener('keydown', e => {
+  if (e.key === 'Escape') { e.stopPropagation(); $('#place-results').hidden = true; }
+});
+$('#place-clear').onclick = () => {
+  $('#place-q').value = '';
+  $('#place-clear').hidden = true;
+  $('#place-results').hidden = true;
+  $('#place-q').focus();
+};
+map.on('click', () => { $('#place-results').hidden = true; });
 
 // ── Filters ──────────────────────────────────────────────────────
 // ── Pouch search ─────────────────────────────────────────────────
