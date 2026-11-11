@@ -1,0 +1,1083 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>PouchMap</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+
+<style>
+/* ── Design tokens ─────────────────────────────────────────────── */
+/* Layout: fixed sidebar left + full-height map right; detail drawer bottom */
+:root {
+  --bg:        #0d0f1a;
+  --surface:   #131626;
+  --surface2:  #1a1e33;
+  --surface3:  #202540;
+  --border:    #2a2f52;
+  --accent:    #6c7cff;
+  --accent2:   #9b8bff;
+  --green:     #34d399;
+  --amber:     #f59e0b;
+  --red:       #f87171;
+  --text:      #e8eaf6;
+  --muted:     #7b82a8;
+  --sidebar:   280px;
+  color-scheme: dark;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; overflow: hidden; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Inter', system-ui, sans-serif;
+  font-size: 14px;
+  display: flex;
+}
+
+/* ── Sidebar ───────────────────────────────────────────────────── */
+#sidebar {
+  width: var(--sidebar);
+  min-width: var(--sidebar);
+  height: 100%;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  z-index: 400;
+  padding-left: env(safe-area-inset-left, 0px);
+}
+
+#sidebar-inner {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+/* Logo */
+#logo-bar {
+  padding: 18px 16px 14px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+#logo {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -.3px;
+}
+.logo-pin {
+  width: 28px; height: 28px;
+  background: var(--accent);
+  border-radius: 50% 50% 50% 0;
+  transform: rotate(-45deg);
+  flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+}
+.logo-pin-dot {
+  width: 8px; height: 8px;
+  background: var(--bg);
+  border-radius: 50%;
+  transform: rotate(45deg);
+}
+.logo-word { background: linear-gradient(120deg, var(--accent), var(--accent2)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+#tagline { font-size: 11px; color: var(--muted); margin-top: 3px; letter-spacing: .01em; }
+
+/* Filters */
+#filters {
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.filter-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 7px;
+}
+.f-row { display: flex; gap: 6px; margin-bottom: 8px; }
+select, input[type=text], input[type=number] {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 7px;
+  padding: 6px 9px;
+  font-size: 12px;
+  font-family: inherit;
+  outline: none;
+  width: 100%;
+  transition: border-color .15s;
+  -webkit-appearance: none;
+  appearance: none;
+}
+select:focus, input[type=text]:focus, input[type=number]:focus { border-color: var(--accent); }
+.price-row { display: flex; align-items: center; gap: 8px; }
+input[type=range] {
+  flex: 1;
+  accent-color: var(--accent);
+  cursor: pointer;
+  height: 3px;
+  appearance: auto;
+  border: none;
+  background: transparent;
+  padding: 0;
+}
+.price-val {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--green);
+  font-variant-numeric: tabular-nums;
+  min-width: 36px;
+  text-align: right;
+}
+.type-chips { display: flex; gap: 5px; flex-wrap: wrap; }
+.type-chip {
+  display: flex; align-items: center; gap: 4px;
+  padding: 4px 9px;
+  border-radius: 20px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--muted);
+  transition: all .15s;
+  user-select: none;
+}
+.type-chip.on {
+  color: var(--text);
+  background: var(--surface3);
+  border-color: var(--accent);
+}
+.type-chip input { display: none; }
+.f-btns { display: flex; gap: 6px; margin-top: 10px; }
+.btn {
+  padding: 7px 12px;
+  border: none;
+  border-radius: 7px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  transition: all .15s;
+  flex: 1;
+}
+.btn:active { transform: scale(.97); }
+.btn-accent { background: var(--accent); color: #fff; }
+.btn-accent:hover { background: var(--accent2); }
+.btn-ghost { background: var(--surface3); color: var(--muted); }
+.btn-ghost:hover { background: var(--border); color: var(--text); }
+.btn-add { background: linear-gradient(135deg, var(--accent), var(--accent2)); color: #fff; }
+.btn-add:hover { opacity: .9; }
+.btn-danger { background: var(--red); color: #fff; opacity: .85; }
+.btn-danger:hover { opacity: 1; }
+
+/* Location list */
+#list-wrap {
+  flex: 1;
+  overflow-y: auto;
+  padding: 10px 10px;
+}
+#list-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+  padding: 0 4px;
+}
+#list-header .filter-label { margin: 0; }
+#loc-count {
+  font-size: 11px;
+  font-weight: 700;
+  background: var(--accent);
+  color: #fff;
+  padding: 1px 7px;
+  border-radius: 20px;
+}
+
+.loc-card {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin-bottom: 7px;
+  cursor: pointer;
+  transition: border-color .15s, background .15s;
+}
+.loc-card:hover { border-color: var(--accent); background: var(--surface3); }
+.loc-card.active { border-color: var(--accent); }
+.loc-card-head { display: flex; align-items: flex-start; gap: 7px; }
+.loc-type-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  margin-top: 4px;
+}
+.loc-name { font-weight: 600; font-size: 13px; line-height: 1.3; }
+.loc-sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
+.loc-price-row { margin-top: 7px; display: flex; gap: 5px; align-items: center; }
+.price-pill {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 20px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  background: color-mix(in srgb, var(--green) 12%, transparent);
+  color: var(--green);
+  border: 1px solid color-mix(in srgb, var(--green) 30%, transparent);
+}
+.no-price { font-size: 11px; color: var(--muted); font-style: italic; }
+
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+/* ── Map ───────────────────────────────────────────────────────── */
+#map-wrap {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+}
+#map {
+  width: 100%; height: 100%;
+  background: var(--bg);
+}
+.leaflet-tile-pane { filter: brightness(1.15); }
+.leaflet-container { font-family: inherit; }
+.leaflet-popup-content-wrapper {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text);
+  box-shadow: 0 8px 30px rgba(0,0,0,.5);
+  padding: 0;
+}
+.leaflet-popup-content { margin: 0; }
+.leaflet-popup-tip { background: var(--border); }
+.leaflet-popup-close-button { color: var(--muted) !important; padding: 6px 8px !important; }
+
+.popup-inner { padding: 12px 14px; min-width: 160px; }
+.popup-name { font-weight: 700; font-size: 14px; font-family: 'Space Grotesk', sans-serif; }
+.popup-type { font-size: 11px; color: var(--muted); margin-top: 2px; }
+.popup-price { font-size: 15px; font-weight: 700; color: var(--green); margin-top: 6px; font-variant-numeric: tabular-nums; }
+.popup-count { font-size: 11px; color: var(--muted); margin-top: 2px; }
+.popup-btn {
+  display: block;
+  margin-top: 8px;
+  padding: 6px 0;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  width: 100%;
+  font-family: inherit;
+}
+.popup-btn:hover { background: var(--accent2); }
+
+/* FAB */
+#fab {
+  position: absolute;
+  bottom: 28px;
+  right: 20px;
+  z-index: 1000;
+  width: 50px; height: 50px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--accent), var(--accent2));
+  border: none;
+  color: #fff;
+  font-size: 24px;
+  cursor: pointer;
+  box-shadow: 0 4px 20px color-mix(in srgb, var(--accent) 40%, transparent);
+  display: flex; align-items: center; justify-content: center;
+  transition: transform .15s, box-shadow .15s;
+  right: max(20px, calc(20px + env(safe-area-inset-right, 0px)));
+  padding: 0;
+}
+#fab:hover { transform: scale(1.08); box-shadow: 0 6px 28px color-mix(in srgb, var(--accent) 55%, transparent); }
+#fab:active { transform: scale(.95); }
+#map-wrap:has(#drawer.open) #fab { opacity: 0; pointer-events: none; }
+
+/* ── Detail drawer ─────────────────────────────────────────────── */
+#drawer {
+  position: absolute;
+  bottom: 0; left: 0; right: 0;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  z-index: 1100;
+  transform: translateY(100%);
+  transition: transform .3s cubic-bezier(.4,0,.2,1);
+  max-height: 60%;
+  display: flex; flex-direction: column;
+  padding-right: max(0px, env(safe-area-inset-right, 0px));
+}
+#drawer.open { transform: translateY(0); }
+
+#drawer-handle {
+  width: 36px; height: 4px;
+  background: var(--border);
+  border-radius: 2px;
+  margin: 10px auto 0;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+#drawer-head {
+  padding: 10px 16px 8px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--border);
+}
+#drawer-name {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 17px;
+  font-weight: 700;
+}
+#drawer-meta { font-size: 11px; color: var(--muted); margin-top: 2px; }
+#drawer-close {
+  background: var(--surface3);
+  border: none;
+  color: var(--muted);
+  border-radius: 50%;
+  width: 26px; height: 26px;
+  cursor: pointer;
+  font-size: 13px;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+#drawer-close:hover { color: var(--text); }
+
+#drawer-prices {
+  flex: 1;
+  overflow-y: auto;
+  padding: 10px 14px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 8px;
+  align-content: start;
+}
+.price-card {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 11px;
+  position: relative;
+}
+.pc-brand {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+  color: var(--accent2);
+  margin-bottom: 1px;
+}
+.pc-flavor { font-size: 13px; font-weight: 600; }
+.pc-strength { font-size: 11px; color: var(--muted); }
+.pc-price {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--green);
+  font-variant-numeric: tabular-nums;
+  font-family: 'Space Grotesk', sans-serif;
+  margin-top: 5px;
+}
+.pc-time { font-size: 10px; color: var(--muted); margin-top: 3px; }
+.pc-del {
+  position: absolute;
+  top: 7px; right: 8px;
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 2px 4px;
+  border-radius: 4px;
+}
+.pc-del:hover { color: var(--red); background: color-mix(in srgb, var(--red) 10%, transparent); }
+.no-prices-msg {
+  grid-column: 1/-1;
+  color: var(--muted);
+  font-size: 13px;
+  padding: 8px 0;
+  text-align: center;
+}
+
+#drawer-foot {
+  padding: 10px 14px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+#drawer-foot .btn { flex: 1; }
+
+/* ── Modals ────────────────────────────────────────────────────── */
+.modal {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,.7);
+  backdrop-filter: blur(6px);
+  z-index: 800;
+  display: flex; align-items: center; justify-content: center;
+  padding: max(16px, env(safe-area-inset-left, 0px)) max(16px, env(safe-area-inset-right, 0px));
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .2s;
+}
+.modal.open { opacity: 1; pointer-events: all; }
+
+.modal-box {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 22px 20px 18px;
+  width: min(400px, 100%);
+  max-height: 90vh;
+  overflow-y: auto;
+  transform: translateY(10px);
+  transition: transform .2s;
+}
+.modal.open .modal-box { transform: translateY(0); }
+.modal-title {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 18px;
+  font-weight: 700;
+  margin-bottom: 16px;
+}
+.form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.fg { margin-bottom: 12px; }
+.fg label {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  letter-spacing: .05em;
+  text-transform: uppercase;
+  margin-bottom: 5px;
+}
+.hint-text { font-size: 11px; color: var(--muted); margin-bottom: 10px; }
+.modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px; }
+.modal-actions .btn { flex: 0 0 auto; padding: 8px 18px; }
+
+/* ── Map pin svg ───────────────────────────────────────────────── */
+/* custom div icons defined in JS */
+
+/* ── Toast ─────────────────────────────────────────────────────── */
+#toast {
+  position: fixed;
+  bottom: 90px;
+  left: 50%;
+  transform: translateX(-50%) translateY(10px);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 9px 18px;
+  border-radius: 20px;
+  font-size: 13px;
+  font-weight: 500;
+  z-index: 900;
+  opacity: 0;
+  transition: opacity .2s, transform .2s;
+  pointer-events: none;
+  white-space: nowrap;
+  box-shadow: 0 4px 20px rgba(0,0,0,.4);
+}
+#toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+/* ── Empty state ───────────────────────────────────────────────── */
+#empty-list {
+  text-align: center;
+  padding: 24px 10px;
+  color: var(--muted);
+  font-size: 13px;
+  display: none;
+}
+#empty-list .big { font-size: 28px; margin-bottom: 8px; }
+
+/* ── Responsive: stack on mobile ──────────────────────────────── */
+@media (max-width: 600px) {
+  body { flex-direction: column; }
+  #sidebar {
+    width: 100%;
+    min-width: 100%;
+    height: auto;
+    max-height: 50%;
+    overflow-y: auto;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+  }
+  #list-wrap { max-height: 180px; }
+  #map-wrap { flex: 1; }
+  .form-row { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+
+<!-- Sidebar -->
+<div id="sidebar">
+  <div id="sidebar-inner">
+    <div id="logo-bar">
+      <div id="logo">
+        <div class="logo-pin"><div class="logo-pin-dot"></div></div>
+        <span class="logo-word">PouchMap</span>
+      </div>
+      <div id="tagline">Track nicotine pouch prices near you</div>
+    </div>
+
+    <div id="filters">
+      <div class="filter-label">Filters</div>
+      <div class="f-row">
+        <select id="f-brand"><option value="">All Brands</option></select>
+      </div>
+      <div class="f-row">
+        <select id="f-product"><option value="">All Products</option></select>
+      </div>
+      <div class="f-row price-row">
+        <span style="font-size:11px;color:var(--muted);white-space:nowrap">Max $</span>
+        <input type="range" id="f-price" min="1" max="25" value="25" step=".25">
+        <span class="price-val" id="f-price-val">Any</span>
+      </div>
+      <div class="type-chips" id="type-chips">
+        <label class="type-chip on" data-val="gas_station"><input type="checkbox" value="gas_station" checked>⛽ Gas</label>
+        <label class="type-chip on" data-val="convenience_store"><input type="checkbox" value="convenience_store" checked>🏪 Convenience</label>
+        <label class="type-chip on" data-val="smoke_shop"><input type="checkbox" value="smoke_shop" checked>🚬 Smoke Shop</label>
+      </div>
+      <div class="f-btns">
+        <button class="btn btn-accent" onclick="applyFilters()">Search</button>
+        <button class="btn btn-ghost" onclick="resetFilters()">Reset</button>
+      </div>
+    </div>
+
+    <div id="list-wrap">
+      <div id="list-header">
+        <div class="filter-label" style="margin:0">Locations</div>
+        <span id="loc-count">0</span>
+      </div>
+      <div id="loc-list"></div>
+      <div id="empty-list">
+        <div class="big">📍</div>
+        No locations yet.<br>Click <strong>+</strong> to add a store.
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Map -->
+<div id="map-wrap">
+  <div id="map"></div>
+  <button id="fab" onclick="openAddLoc()" title="Add a store">+</button>
+
+  <!-- Detail drawer -->
+  <div id="drawer">
+    <div id="drawer-handle" onclick="closeDrawer()"></div>
+    <div id="drawer-head">
+      <div>
+        <div id="drawer-name"></div>
+        <div id="drawer-meta"></div>
+      </div>
+      <button id="drawer-close" onclick="closeDrawer()">✕</button>
+    </div>
+    <div id="drawer-prices"></div>
+    <div id="drawer-foot">
+      <button class="btn btn-add" onclick="openReportPrice()">+ Report Price</button>
+      <button class="btn btn-danger" id="del-loc-btn">Delete</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: Add Location -->
+<div class="modal" id="modal-loc">
+  <div class="modal-box">
+    <div class="modal-title">Add a Store</div>
+    <div class="fg"><label>Store Name</label><input type="text" id="new-name" placeholder="e.g. QuikTrip #142"></div>
+    <div class="fg">
+      <label>Type</label>
+      <select id="new-type">
+        <option value="gas_station">⛽ Gas Station</option>
+        <option value="convenience_store">🏪 Convenience Store</option>
+        <option value="smoke_shop">🚬 Smoke Shop</option>
+      </select>
+    </div>
+    <div class="fg"><label>Address (optional)</label><input type="text" id="new-addr" placeholder="123 Main St"></div>
+    <div class="hint-text" id="pin-hint">📍 Click the map to drop a pin, or enter coordinates below.</div>
+    <div class="form-row">
+      <div class="fg"><label>Latitude</label><input type="number" id="new-lat" step="any" placeholder="40.7128"></div>
+      <div class="fg"><label>Longitude</label><input type="number" id="new-lng" step="any" placeholder="-74.0060"></div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeLoc()">Cancel</button>
+      <button class="btn btn-accent" onclick="submitLoc()">Add Store</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: Report Price -->
+<div class="modal" id="modal-price">
+  <div class="modal-box">
+    <div class="modal-title">Report a Price</div>
+    <div class="fg"><label>Brand</label><select id="rp-brand"></select></div>
+    <div class="fg"><label>Product</label><select id="rp-product"></select></div>
+    <div class="fg"><label>Price ($)</label><input type="number" id="rp-price" step="0.01" min="0.01" placeholder="4.99"></div>
+    <div class="fg"><label>Your Name (optional)</label><input type="text" id="rp-user" placeholder="Anonymous"></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closePrice()">Cancel</button>
+      <button class="btn btn-accent" onclick="submitPrice()">Submit</button>
+    </div>
+  </div>
+</div>
+
+<!-- Toast -->
+<div id="toast"></div>
+
+<script>
+// ── Data store (localStorage) ────────────────────────────────────
+const LOCS_KEY = 'pm_locs_v1';
+const PRICES_KEY = 'pm_prices_v1';
+const PRODS_KEY = 'pm_products_v1';
+
+function load(k, def) {
+  try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : def; }
+  catch { return def; }
+}
+function save(k, v) {
+  try { localStorage.setItem(k, JSON.stringify(v)); } catch {}
+}
+
+const PRODUCTS = [
+  { id: 1,  brand: 'ZYN',    flavor: 'Cool Mint',    strength: '3mg',   mg: 3   },
+  { id: 2,  brand: 'ZYN',    flavor: 'Cool Mint',    strength: '6mg',   mg: 6   },
+  { id: 3,  brand: 'ZYN',    flavor: 'Citrus',       strength: '3mg',   mg: 3   },
+  { id: 4,  brand: 'ZYN',    flavor: 'Citrus',       strength: '6mg',   mg: 6   },
+  { id: 5,  brand: 'ZYN',    flavor: 'Spearmint',    strength: '3mg',   mg: 3   },
+  { id: 6,  brand: 'ZYN',    flavor: 'Spearmint',    strength: '6mg',   mg: 6   },
+  { id: 7,  brand: 'ZYN',    flavor: 'Coffee',       strength: '6mg',   mg: 6   },
+  { id: 8,  brand: 'ZYN',    flavor: 'Wintergreen',  strength: '3mg',   mg: 3   },
+  { id: 9,  brand: 'On!',    flavor: 'Mint',         strength: '3.5mg', mg: 3.5 },
+  { id: 10, brand: 'On!',    flavor: 'Mint',         strength: '8mg',   mg: 8   },
+  { id: 11, brand: 'On!',    flavor: 'Berry',        strength: '3.5mg', mg: 3.5 },
+  { id: 12, brand: 'On!',    flavor: 'Coffee',       strength: '3.5mg', mg: 3.5 },
+  { id: 13, brand: 'VELO',   flavor: 'Mint',         strength: '4mg',   mg: 4   },
+  { id: 14, brand: 'VELO',   flavor: 'Citrus',       strength: '4mg',   mg: 4   },
+  { id: 15, brand: 'VELO',   flavor: 'Black Cherry', strength: '4mg',   mg: 4   },
+  { id: 16, brand: 'Rogue',  flavor: 'Mint',         strength: '3mg',   mg: 3   },
+  { id: 17, brand: 'Rogue',  flavor: 'Mint',         strength: '6mg',   mg: 6   },
+  { id: 18, brand: 'Rogue',  flavor: 'Wintergreen',  strength: '3mg',   mg: 3   },
+  { id: 19, brand: 'Rogue',  flavor: 'Fruit',        strength: '3mg',   mg: 3   },
+  { id: 20, brand: 'LUCY',   flavor: 'Wintergreen',  strength: '4mg',   mg: 4   },
+  { id: 21, brand: 'LUCY',   flavor: 'Mango',        strength: '4mg',   mg: 4   },
+  { id: 22, brand: 'Grizzly',flavor: 'Wintergreen',  strength: '4mg',   mg: 4   },
+  { id: 23, brand: 'Grizzly',flavor: 'Mint',         strength: '4mg',   mg: 4   },
+];
+
+const TYPE_CFG = {
+  gas_station:       { label: 'Gas Station',       icon: '⛽', color: '#f59e0b' },
+  convenience_store: { label: 'Convenience Store', icon: '🏪', color: '#6c7cff' },
+  smoke_shop:        { label: 'Smoke Shop',        icon: '🚬', color: '#f87171' },
+};
+
+let locs   = load(LOCS_KEY, null);
+let prices = load(PRICES_KEY, null);
+
+// Seed demo data on first load
+if (!locs) {
+  locs = [
+    { id: 1, name: 'Sunoco on Main',     type: 'gas_station',       address: '123 Main St',       lat: 40.7128, lng: -74.0060 },
+    { id: 2, name: '7-Eleven Broadway',  type: 'convenience_store', address: '456 Broadway',       lat: 40.7158, lng: -74.0020 },
+    { id: 3, name: 'Smoke & Vape World', type: 'smoke_shop',        address: '789 W 42nd St',      lat: 40.7580, lng: -73.9855 },
+    { id: 4, name: 'QuikTrip',           type: 'gas_station',       address: '321 5th Ave',        lat: 40.7484, lng: -73.9967 },
+    { id: 5, name: 'Cumberland Farms',   type: 'convenience_store', address: '654 Lexington Ave',  lat: 40.7614, lng: -73.9776 },
+  ];
+  prices = [
+    { id: 1,  locId: 1, prodId: 1,  price: 5.49, user: 'Demo', at: ago(2) },
+    { id: 2,  locId: 1, prodId: 2,  price: 5.49, user: 'Demo', at: ago(2) },
+    { id: 3,  locId: 1, prodId: 9,  price: 3.99, user: 'Demo', at: ago(1) },
+    { id: 4,  locId: 2, prodId: 1,  price: 4.99, user: 'Demo', at: ago(3) },
+    { id: 5,  locId: 2, prodId: 3,  price: 4.99, user: 'Demo', at: ago(3) },
+    { id: 6,  locId: 2, prodId: 13, price: 4.49, user: 'Demo', at: ago(1) },
+    { id: 7,  locId: 3, prodId: 1,  price: 4.75, user: 'Demo', at: ago(5) },
+    { id: 8,  locId: 3, prodId: 9,  price: 3.50, user: 'Demo', at: ago(5) },
+    { id: 9,  locId: 3, prodId: 10, price: 3.50, user: 'Demo', at: ago(5) },
+    { id: 10, locId: 4, prodId: 4,  price: 5.29, user: 'Demo', at: ago(1) },
+    { id: 11, locId: 4, prodId: 16, price: 4.99, user: 'Demo', at: ago(2) },
+    { id: 12, locId: 5, prodId: 1,  price: 5.19, user: 'Demo', at: ago(2) },
+    { id: 13, locId: 5, prodId: 6,  price: 5.19, user: 'Demo', at: ago(2) },
+  ];
+  save(LOCS_KEY, locs);
+  save(PRICES_KEY, prices);
+}
+
+function ago(days) { return new Date(Date.now() - days * 86400000).toISOString(); }
+
+let nextLocId   = Math.max(0, ...locs.map(l => l.id)) + 1;
+let nextPriceId = Math.max(0, ...prices.map(p => p.id)) + 1;
+
+// ── Map ───────────────────────────────────────────────────────────
+let map, markerLayer = {}, activeLocId = null, addingPin = false;
+
+function initMap() {
+  const center = locs.length ? [locs[0].lat, locs[0].lng] : [40.73, -73.99];
+  map = L.map('map', { zoomControl: false }).setView(center, 13);
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    attribution: '© OpenStreetMap © CARTO', maxZoom: 20
+  }).addTo(map);
+  L.control.zoom({ position: 'topright' }).addTo(map);
+  map.on('click', onMapClick);
+}
+
+function makeIcon(type, big = false) {
+  const cfg = TYPE_CFG[type] || TYPE_CFG.gas_station;
+  const s = big ? 42 : 34;
+  return L.divIcon({
+    className: '',
+    iconSize: [s, s],
+    iconAnchor: [s / 2, s],
+    html: `<div style="
+      width:${s}px;height:${s}px;
+      background:${cfg.color};
+      border-radius:50% 50% 50% 0;
+      transform:rotate(-45deg);
+      border:2.5px solid rgba(255,255,255,.8);
+      display:flex;align-items:center;justify-content:center;
+      box-shadow:0 3px 12px rgba(0,0,0,.55);
+    "><span style="transform:rotate(45deg);font-size:${big ? 17 : 14}px;line-height:1">${cfg.icon}</span></div>`
+  });
+}
+
+function renderMarkers() {
+  Object.values(markerLayer).forEach(m => map.removeLayer(m));
+  markerLayer = {};
+  locs.forEach(loc => addMarker(loc));
+}
+
+function addMarker(loc) {
+  const cfg = TYPE_CFG[loc.type] || TYPE_CFG.gas_station;
+  const locPrices = prices.filter(p => p.locId === loc.id);
+  const minP = locPrices.length ? Math.min(...locPrices.map(p => p.price)) : null;
+  const uniq = [...new Set(locPrices.map(p => p.prodId))].length;
+
+  const m = L.marker([loc.lat, loc.lng], { icon: makeIcon(loc.type) });
+  m.bindPopup(`
+    <div class="popup-inner">
+      <div class="popup-name">${esc(loc.name)}</div>
+      <div class="popup-type">${cfg.icon} ${cfg.label}</div>
+      <div class="popup-price">${minP != null ? 'From $' + minP.toFixed(2) : 'No prices yet'}</div>
+      <div class="popup-count">${uniq} product${uniq !== 1 ? 's' : ''} tracked</div>
+      <button class="popup-btn" onclick="openDrawer(${loc.id});map.closePopup()">View Prices</button>
+    </div>`, { maxWidth: 220, className: '' });
+  m.on('click', () => { /* popup handles it */ });
+  m.addTo(map);
+  markerLayer[loc.id] = m;
+}
+
+// ── Sidebar list ──────────────────────────────────────────────────
+function renderList(subset = null) {
+  const items = subset !== null ? subset : locs;
+  document.getElementById('loc-count').textContent = items.length;
+  const el = document.getElementById('loc-list');
+  const em = document.getElementById('empty-list');
+
+  if (!items.length) {
+    el.innerHTML = '';
+    em.style.display = 'block';
+    return;
+  }
+  em.style.display = 'none';
+
+  el.innerHTML = items.map(loc => {
+    const cfg = TYPE_CFG[loc.type] || TYPE_CFG.gas_station;
+    const locPrices = prices.filter(p => p.locId === loc.id);
+    const minP = locPrices.length ? Math.min(...locPrices.map(p => p.price)) : null;
+    return `
+      <div class="loc-card${loc.id === activeLocId ? ' active' : ''}" onclick="openDrawer(${loc.id})">
+        <div class="loc-card-head">
+          <div class="loc-type-dot" style="background:${cfg.color}"></div>
+          <div>
+            <div class="loc-name">${esc(loc.name)}</div>
+            <div class="loc-sub">${cfg.label}${loc.address ? ' · ' + esc(loc.address) : ''}</div>
+          </div>
+        </div>
+        <div class="loc-price-row">
+          ${minP != null
+            ? `<span class="price-pill">from $${minP.toFixed(2)}</span>`
+            : `<span class="no-price">No prices yet</span>`}
+        </div>
+      </div>`;
+  }).join('');
+}
+
+// ── Drawer ────────────────────────────────────────────────────────
+function openDrawer(id) {
+  activeLocId = id;
+  const loc = locs.find(l => l.id === id);
+  if (!loc) return;
+  const cfg = TYPE_CFG[loc.type] || TYPE_CFG.gas_station;
+
+  document.getElementById('drawer-name').textContent = loc.name;
+  document.getElementById('drawer-meta').textContent = `${cfg.icon} ${cfg.label}${loc.address ? ' · ' + loc.address : ''}`;
+  document.getElementById('del-loc-btn').onclick = () => deleteLoc(id);
+
+  renderDrawerPrices(id);
+  document.getElementById('drawer').classList.add('open');
+
+  // fly map
+  if (markerLayer[id]) {
+    map.flyTo([loc.lat, loc.lng], 15, { animate: true, duration: .7 });
+    markerLayer[id].setIcon(makeIcon(loc.type, true));
+    setTimeout(() => markerLayer[id] && markerLayer[id].setIcon(makeIcon(loc.type)), 1800);
+  }
+  renderList();
+}
+
+function renderDrawerPrices(id) {
+  const locPrices = prices.filter(p => p.locId === id);
+  // latest per product
+  const seen = new Set(), latest = [];
+  locPrices.sort((a, b) => b.at.localeCompare(a.at)).forEach(p => {
+    if (!seen.has(p.prodId)) { seen.add(p.prodId); latest.push(p); }
+  });
+  latest.sort((a, b) => a.price - b.price);
+
+  const el = document.getElementById('drawer-prices');
+  if (!latest.length) {
+    el.innerHTML = '<div class="no-prices-msg">No prices reported yet — be the first!</div>';
+    return;
+  }
+  el.innerHTML = latest.map(p => {
+    const prod = PRODUCTS.find(x => x.id === p.prodId) || {};
+    return `
+      <div class="price-card">
+        <button class="pc-del" onclick="deletePrice(${p.id},${id})" title="Remove">✕</button>
+        <div class="pc-brand">${esc(prod.brand || '')}</div>
+        <div class="pc-flavor">${esc(prod.flavor || '')}</div>
+        <div class="pc-strength">${esc(prod.strength || '')}</div>
+        <div class="pc-price">$${p.price.toFixed(2)}</div>
+        <div class="pc-time">${timeAgo(p.at)} · ${esc(p.user)}</div>
+      </div>`;
+  }).join('');
+}
+
+function closeDrawer() {
+  document.getElementById('drawer').classList.remove('open');
+  activeLocId = null;
+  renderList();
+}
+
+function deleteLoc(id) {
+  if (!confirm('Delete this location and all its price data?')) return;
+  locs = locs.filter(l => l.id !== id);
+  prices = prices.filter(p => p.locId !== id);
+  save(LOCS_KEY, locs);
+  save(PRICES_KEY, prices);
+  if (markerLayer[id]) { map.removeLayer(markerLayer[id]); delete markerLayer[id]; }
+  closeDrawer();
+  renderList();
+  toast('Location deleted');
+}
+
+function deletePrice(priceId, locId) {
+  prices = prices.filter(p => p.id !== priceId);
+  save(PRICES_KEY, prices);
+  renderDrawerPrices(locId);
+  updateMarker(locId);
+  renderList();
+  toast('Price removed');
+}
+
+function updateMarker(locId) {
+  if (markerLayer[locId]) { map.removeLayer(markerLayer[locId]); delete markerLayer[locId]; }
+  const loc = locs.find(l => l.id === locId);
+  if (loc) addMarker(loc);
+}
+
+// ── Add Location Modal ────────────────────────────────────────────
+function openAddLoc() {
+  addingPin = true;
+  document.getElementById('new-name').value = '';
+  document.getElementById('new-addr').value = '';
+  document.getElementById('new-lat').value = '';
+  document.getElementById('new-lng').value = '';
+  document.getElementById('pin-hint').textContent = '📍 Click the map to drop a pin, or enter coordinates below.';
+  document.getElementById('modal-loc').classList.add('open');
+}
+function closeLoc() {
+  addingPin = false;
+  document.getElementById('modal-loc').classList.remove('open');
+}
+function submitLoc() {
+  const name = document.getElementById('new-name').value.trim();
+  const type = document.getElementById('new-type').value;
+  const addr = document.getElementById('new-addr').value.trim();
+  const lat  = parseFloat(document.getElementById('new-lat').value);
+  const lng  = parseFloat(document.getElementById('new-lng').value);
+  if (!name) { toast('Enter a store name'); return; }
+  if (isNaN(lat) || isNaN(lng)) { toast('Drop a pin or enter coordinates'); return; }
+  const loc = { id: nextLocId++, name, type, address: addr, lat, lng };
+  locs.push(loc);
+  save(LOCS_KEY, locs);
+  addMarker(loc);
+  renderList();
+  closeLoc();
+  openDrawer(loc.id);
+  toast('Store added!');
+}
+function onMapClick(e) {
+  if (!addingPin) return;
+  document.getElementById('new-lat').value = e.latlng.lat.toFixed(6);
+  document.getElementById('new-lng').value = e.latlng.lng.toFixed(6);
+  document.getElementById('pin-hint').textContent = `✅ Pin set at ${e.latlng.lat.toFixed(4)}, ${e.latlng.lng.toFixed(4)} — fill in the form above.`;
+}
+
+// ── Report Price Modal ────────────────────────────────────────────
+function populateReportDropdowns() {
+  const brands = [...new Set(PRODUCTS.map(p => p.brand))].sort();
+  const bSel = document.getElementById('rp-brand');
+  bSel.innerHTML = brands.map(b => `<option value="${b}">${b}</option>`).join('');
+  bSel.onchange = updateReportProducts;
+  updateReportProducts();
+}
+function updateReportProducts() {
+  const brand = document.getElementById('rp-brand').value;
+  const pSel = document.getElementById('rp-product');
+  pSel.innerHTML = PRODUCTS.filter(p => p.brand === brand)
+    .map(p => `<option value="${p.id}">${p.flavor} ${p.strength}</option>`).join('');
+}
+function openReportPrice() {
+  document.getElementById('rp-price').value = '';
+  document.getElementById('rp-user').value = '';
+  document.getElementById('modal-price').classList.add('open');
+}
+function closePrice() { document.getElementById('modal-price').classList.remove('open'); }
+function submitPrice() {
+  const prodId = parseInt(document.getElementById('rp-product').value);
+  const price  = parseFloat(document.getElementById('rp-price').value);
+  const user   = document.getElementById('rp-user').value.trim() || 'Anonymous';
+  if (!prodId) { toast('Select a product'); return; }
+  if (isNaN(price) || price <= 0 || price > 999) { toast('Enter a valid price'); return; }
+  prices.push({ id: nextPriceId++, locId: activeLocId, prodId, price, user, at: new Date().toISOString() });
+  save(PRICES_KEY, prices);
+  renderDrawerPrices(activeLocId);
+  updateMarker(activeLocId);
+  renderList();
+  closePrice();
+  toast('Price reported — thanks!');
+}
+
+// ── Filters ───────────────────────────────────────────────────────
+document.getElementById('f-price').oninput = function() {
+  document.getElementById('f-price-val').textContent = '$' + parseFloat(this.value).toFixed(2);
+};
+document.querySelectorAll('.type-chip').forEach(chip => {
+  chip.onclick = () => {
+    chip.classList.toggle('on');
+    chip.querySelector('input').checked = chip.classList.contains('on');
+  };
+});
+
+// populate sidebar brand filter
+function populateFilters() {
+  const brands = [...new Set(PRODUCTS.map(p => p.brand))].sort();
+  const bSel = document.getElementById('f-brand');
+  bSel.innerHTML = '<option value="">All Brands</option>' + brands.map(b => `<option>${b}</option>`).join('');
+  bSel.onchange = () => {
+    const pSel = document.getElementById('f-product');
+    const brand = bSel.value;
+    pSel.innerHTML = '<option value="">All Products</option>' + PRODUCTS
+      .filter(p => !brand || p.brand === brand)
+      .map(p => `<option value="${p.id}">${p.brand} ${p.flavor} ${p.strength}</option>`).join('');
+  };
+  bSel.onchange();
+}
+
+function applyFilters() {
+  const brand   = document.getElementById('f-brand').value;
+  const prodId  = parseInt(document.getElementById('f-product').value) || 0;
+  const maxP    = parseFloat(document.getElementById('f-price').value);
+  const types   = [...document.querySelectorAll('.type-chip.on')].map(c => c.dataset.val);
+
+  let matchedLocIds = new Set();
+
+  if (!brand && !prodId) {
+    // only type + price filter
+    locs.forEach(loc => {
+      if (!types.includes(loc.type)) return;
+      const locPrices = prices.filter(p => p.locId === loc.id && p.price <= maxP);
+      if (locPrices.length || maxP >= 25) matchedLocIds.add(loc.id);
+    });
+  } else {
+    prices.forEach(p => {
+      if (p.price > maxP) return;
+      const prod = PRODUCTS.find(x => x.id === p.prodId);
+      if (!prod) return;
+      if (brand && prod.brand !== brand) return;
+      if (prodId && prod.id !== prodId) return;
+      const loc = locs.find(l => l.id === p.locId);
+      if (loc && types.includes(loc.type)) matchedLocIds.add(loc.id);
+    });
+  }
+
+  const subset = locs.filter(l => matchedLocIds.has(l.id));
+  renderList(subset);
+
+  Object.entries(markerLayer).forEach(([id, m]) => {
+    m.setOpacity(matchedLocIds.has(parseInt(id)) ? 1 : 0.15);
+  });
+  toast(`${subset.length} location${subset.length !== 1 ? 's' : ''} found`);
+}
+
+function resetFilters() {
+  document.getElementById('f-brand').value = '';
+  document.getElementById('f-brand').onchange();
+  document.getElementById('f-price').value = 25;
+  document.getElementById('f-price-val').textContent = 'Any';
+  document.querySelectorAll('.type-chip').forEach(c => { c.classList.add('on'); c.querySelector('input').checked = true; });
+  Object.values(markerLayer).forEach(m => m.setOpacity(1));
+  renderList();
+}
+
+// ── Utils ─────────────────────────────────────────────────────────
+function esc(s) {
+  return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function timeAgo(iso) {
+  if (!iso) return '';
+  const d = Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
+  if (d < 1) return 'just now';
+  if (d < 60) return `${d}m ago`;
+  if (d < 1440) return `${Math.floor(d/60)}h ago`;
+  return `${Math.floor(d/1440)}d ago`;
+}
+let toastT;
+function toast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  clearTimeout(toastT);
+  toastT = setTimeout(() => el.classList.remove('show'), 2600);
+}
+
+// ── Init ──────────────────────────────────────────────────────────
+initMap();
+renderMarkers();
+renderList();
+populateFilters();
+populateReportDropdowns();
+</script>
+</body>
+</html>
