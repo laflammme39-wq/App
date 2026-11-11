@@ -921,6 +921,22 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
 .step.done::before { content: '✓'; background: var(--best); }
 .step-title { font-weight: 700; }
 .step > .btn { align-self: flex-start; }
+.addr-row { display: flex; gap: 8px; }
+.addr-row input { flex: 1; }
+.btn:disabled { opacity: .6; cursor: progress; }
+#pin-status.error { color: var(--danger); }
+.addr-results-label { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+.addr-results { list-style: none; display: flex; flex-direction: column; gap: 6px; }
+.addr-hit {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  font-size: 13px;
+  text-align: left;
+}
+.addr-hit:hover { background: var(--bg); border-color: #c8cfda; }
 .seg { display: flex; flex-wrap: wrap; gap: 6px; }
 .seg label { position: relative; }
 .seg input { position: absolute; opacity: 0; pointer-events: none; }
@@ -1124,8 +1140,19 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
       <h2 class="view-title">Add a store</h2>
       <ol class="steps">
         <li class="step" id="step-pin">
-          <div class="step-title">Put a pin where the store is</div>
-          <p class="muted" id="pin-status"></p>
+          <div class="step-title">Find the store on the map</div>
+          <form id="addr-form" class="field" novalidate>
+            <label for="sf-addr">Address</label>
+            <div class="addr-row">
+              <input id="sf-addr" type="text" placeholder="e.g. 456 Broadway, New York, NY" autocomplete="street-address">
+              <button class="btn btn-primary" type="submit" id="addr-go">Find</button>
+            </div>
+          </form>
+          <p class="muted" id="pin-status" aria-live="polite"></p>
+          <div id="addr-results" hidden>
+            <p class="addr-results-label">Not the right place? Other matches:</p>
+            <ul class="addr-results" id="addr-list"></ul>
+          </div>
           <button class="btn" type="button" id="pin-here">Use my location</button>
         </li>
         <li class="step">
@@ -1143,10 +1170,6 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
                 <label><input type="radio" name="sf-type" value="smoke_shop"><span><i class="dot" style="--c:var(--smoke)"></i>Smoke shop</span></label>
               </div>
             </fieldset>
-            <div class="field">
-              <label for="sf-addr">Address <span class="opt">(optional)</span></label>
-              <input id="sf-addr" type="text" placeholder="123 Main St" autocomplete="off">
-            </div>
             <p class="field-error" id="sf-error" hidden></p>
             <button class="btn btn-primary btn-block" type="submit">Save store</button>
           </form>
@@ -1372,7 +1395,11 @@ const Tools = L.Control.extend({
 L.control.zoom({ position: 'bottomright' }).addTo(map);
 new Tools({ position: 'bottomright' }).addTo(map);
 L.control.layers(baseMaps, null, { position: 'topright' }).addTo(map);
-map.on('click', e => { if (view === 'new') placePin(e.latlng); });
+map.on('click', e => {
+  if (view !== 'new') return;
+  $('#addr-results').hidden = true;
+  placePin(e.latlng);
+});
 
 function fitAll(animate) {
   if (!stores.length) { map.setView([39.5, -98.35], 4); return; }
@@ -1625,29 +1652,141 @@ function startAdd() {
   currentId = null;
   showView('new');
   $('#store-form').reset();
+  $('#addr-form').reset();
+  $('#addr-results').hidden = true;
   $('#sf-error').hidden = true;
   updatePinStatus();
   document.body.classList.add('adding');
-  $('#banner-text').textContent = 'Click the map where the store is';
+  $('#banner-text').textContent = 'Type the address, or click the map where the store is';
   $('#banner').hidden = false;
   renderMarkers();
+  $('#sf-addr').focus();
 }
-function placePin(latlng) {
+function placePin(latlng, message) {
   if (!newPin) {
     newPin = L.marker(latlng, { draggable: true, icon: PIN_ICON, zIndexOffset: 2000, title: 'New store. Drag to adjust.' }).addTo(map);
+    newPin.on('dragend', () => updatePinStatus());
   } else {
     newPin.setLatLng(latlng);
   }
-  updatePinStatus();
+  updatePinStatus(message);
   $('#sf-error').hidden = true;
   $('#banner-text').textContent = 'Pin placed. Drag it to adjust, then fill in the details.';
 }
-function updatePinStatus() {
+function updatePinStatus(message, isError = false) {
   $('#step-pin').classList.toggle('done', !!newPin);
-  $('#pin-status').textContent = newPin
+  const el = $('#pin-status');
+  el.classList.toggle('error', isError);
+  el.textContent = message || (newPin
     ? 'Pin placed. Drag it on the map if it needs adjusting.'
-    : "Click the map where the store is, or use your location if you're there now.";
+    : "Type the address and press Find. You can also click the map, or use your location if you're at the store.");
 }
+
+// ── Address lookup (OpenStreetMap Nominatim, with Esri as a backup; neither needs a key) ──
+async function fetchJson(url) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 8000);
+  try {
+    const res = await fetch(url, { signal: ctrl.signal, headers: { Accept: 'application/json' } });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.json();
+  } finally {
+    clearTimeout(timer);
+  }
+}
+async function geocodeOsm(q) {
+  const b = map.getBounds();
+  const params = new URLSearchParams({
+    q, format: 'jsonv2', addressdetails: '1', limit: '5',
+    viewbox: [b.getWest(), b.getNorth(), b.getEast(), b.getSouth()].join(','),
+  });
+  const data = await fetchJson('https://nominatim.openstreetmap.org/search?' + params);
+  if (!Array.isArray(data)) throw new Error('Unexpected response');
+  return data.map(x => {
+    const a = x.address || {};
+    const street = [a.house_number, a.road].filter(Boolean).join(' ');
+    const town = a.city || a.town || a.village || a.hamlet || a.suburb || a.county;
+    const addr = [street, town, a.state].filter(Boolean).join(', ') || x.display_name;
+    const name = x.name && x.name !== a.road ? x.name : '';
+    return { lat: +x.lat, lng: +x.lon, addr, label: name ? `${name}, ${addr}` : addr, name };
+  });
+}
+async function geocodeEsri(q) {
+  const c = map.getCenter();
+  const params = new URLSearchParams({
+    SingleLine: q, f: 'json', maxLocations: '5', outFields: 'PlaceName,Match_addr', location: `${c.lng},${c.lat}`,
+  });
+  const data = await fetchJson('https://geocode.arcgis.com/arcgis/rest/services/World/GeocodeServer/findAddressCandidates?' + params);
+  return (data.candidates || []).filter(x => x.score >= 80).map(x => {
+    const addr = x.attributes?.Match_addr || x.address;
+    const name = x.attributes?.PlaceName && x.attributes.PlaceName !== addr ? x.attributes.PlaceName : '';
+    return { lat: x.location.y, lng: x.location.x, addr, label: x.address, name };
+  });
+}
+async function geocode(q) {
+  let osmFailed = false;
+  try {
+    const hits = await geocodeOsm(q);
+    if (hits.length) return hits;
+  } catch {
+    osmFailed = true;
+  }
+  try {
+    return await geocodeEsri(q);
+  } catch (err) {
+    if (osmFailed) throw err;
+    return [];
+  }
+}
+function useAddress(hit) {
+  const ll = L.latLng(hit.lat, hit.lng);
+  placePin(ll, `Pin placed at ${hit.addr}. Drag it if it's not quite right.`);
+  map.flyTo(ll, 17, { animate: !reduceMotion });
+  $('#sf-addr').value = hit.addr;
+  if (hit.name && !$('#sf-name').value.trim()) $('#sf-name').value = hit.name;
+}
+$('#addr-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const q = $('#sf-addr').value.trim();
+  if (!q) {
+    updatePinStatus('Type an address first, like 456 Broadway, New York, NY.', true);
+    $('#sf-addr').focus();
+    return;
+  }
+  $('#addr-results').hidden = true;
+  const btn = $('#addr-go');
+  btn.disabled = true;
+  btn.textContent = 'Finding…';
+  updatePinStatus('Looking up that address…');
+  try {
+    const hits = await geocode(q);
+    if (view !== 'new') return;
+    if (!hits.length) {
+      updatePinStatus("Couldn't find that address. Check the spelling, or add the city and state.", true);
+      return;
+    }
+    const seen = new Set();
+    const unique = hits.filter(h => !seen.has(h.label) && seen.add(h.label));
+    useAddress(unique[0]);
+    const others = unique.slice(1);
+    if (others.length) {
+      $('#addr-list').innerHTML = others
+        .map((h, i) => `<li><button type="button" class="addr-hit" data-i="${i}">${esc(h.label)}</button></li>`)
+        .join('');
+      $('#addr-list').querySelectorAll('.addr-hit').forEach(b => {
+        b.onclick = () => useAddress(others[+b.dataset.i]);
+      });
+      $('#addr-results').hidden = false;
+    }
+  } catch {
+    if (view === 'new') {
+      updatePinStatus("Couldn't reach the address lookup. Check your internet connection, or click the map to place the pin.", true);
+    }
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Find';
+  }
+});
 function endAdd() {
   if (newPin) { newPin.remove(); newPin = null; }
   document.body.classList.remove('adding');
@@ -1678,7 +1817,8 @@ $('#new-cancel').onclick = showList;
 $('#banner-cancel').onclick = showList;
 $('#store-form').addEventListener('submit', e => { e.preventDefault(); submitStore(); });
 $('#pin-here').onclick = () => getLocation(ll => {
-  placePin(L.latLng(ll));
+  $('#addr-results').hidden = true;
+  placePin(L.latLng(ll), 'Pin placed at your location. Drag it if the store is a little off.');
   map.flyTo(ll, 17, { animate: !reduceMotion });
   hideToast();
 });
