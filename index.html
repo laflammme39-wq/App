@@ -1452,6 +1452,27 @@ details.more[open] summary::after { transform: rotate(180deg); }
 .icon-btn:hover { background: var(--danger-soft); color: var(--danger); }
 .empty-inline { color: var(--muted); }
 
+/* Add a product */
+.view-intro { color: var(--muted); line-height: 1.5; margin-top: 6px; }
+.ap-form { margin-top: 16px; }
+.size-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 2px; }
+.size-chip {
+  height: 30px; padding: 0 10px;
+  border: 1px solid var(--line); border-radius: 999px;
+  background: var(--surface);
+  font-size: 12px; font-weight: 600;
+  color: var(--muted);
+}
+.size-chip:hover { background: var(--bg); color: var(--ink); }
+.size-chip.on { border-color: var(--accent); background: var(--accent-soft); color: var(--ink); }
+.preview { padding: 10px 12px; border-radius: 8px; background: var(--bg); color: var(--muted); font-size: 13px; line-height: 1.45; }
+.preview b { color: var(--ink); }
+.mine-block { border-top: 1px solid var(--line); }
+.mine { list-style: none; display: flex; flex-direction: column; }
+.mine li { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-top: 1px solid var(--line); }
+.mine li:first-child { border-top: 0; }
+.sug.sug-add { justify-content: flex-start; color: var(--accent); font-weight: 600; }
+
 /* Add-store steps (a real sequence, so they are numbered) */
 .steps { list-style: none; counter-reset: step; display: flex; flex-direction: column; gap: 22px; margin-top: 16px; }
 .step { counter-increment: step; position: relative; display: flex; flex-direction: column; gap: 8px; padding-left: 36px; }
@@ -1788,7 +1809,10 @@ details.more[open] summary::after { transform: rotate(180deg); }
   <div class="view" id="view-list">
     <section class="filters" aria-label="Filters">
       <div class="field search-field">
-        <label for="f-search">Find a product</label>
+        <div class="label-row">
+          <label for="f-search">Find a product</label>
+          <button class="link-btn small" type="button" id="add-product-link">+ Add a product</button>
+        </div>
         <div class="search-box">
           <svg class="search-ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
           <input id="f-search" type="text" role="combobox" aria-expanded="false" aria-controls="f-suggest" aria-autocomplete="list"
@@ -1870,6 +1894,39 @@ details.more[open] summary::after { transform: rotate(180deg); }
       </ol>
     </div>
   </div>
+
+  <!-- Add product view -->
+  <div class="view" id="view-product" hidden>
+    <div class="sub-top"><button class="link-btn" type="button" id="ap-back">← Back</button></div>
+    <div class="pad">
+      <h2 class="view-title">Add a product</h2>
+      <p class="view-intro">Add a beer, wine, spirit, pouch, cigarette, cigar or vape that isn't listed yet. Then anyone can add its price at a store.</p>
+      <form id="product-form" class="form ap-form" novalidate>
+        <fieldset class="field">
+          <legend>Category</legend>
+          <div class="seg" id="ap-cat"></div>
+        </fieldset>
+        <div class="field">
+          <label for="ap-brand">Brand</label>
+          <input id="ap-brand" type="text" list="ap-brands" maxlength="40" autocomplete="off">
+          <datalist id="ap-brands"></datalist>
+        </div>
+        <div class="field">
+          <label for="ap-name">Name, flavor or style <span class="opt">(optional)</span></label>
+          <input id="ap-name" type="text" maxlength="50" autocomplete="off">
+        </div>
+        <div class="field">
+          <label for="ap-size" id="ap-size-label">Size</label>
+          <input id="ap-size" type="text" maxlength="24" autocomplete="off">
+          <div class="size-chips" id="ap-sizes" role="group" aria-label="Common sizes"></div>
+        </div>
+        <p class="preview" id="ap-preview" aria-live="polite"></p>
+        <p class="field-error" id="ap-error" hidden></p>
+        <button class="btn btn-primary btn-block" type="submit">Add product</button>
+      </form>
+    </div>
+    <section class="block mine-block" id="ap-mine" hidden></section>
+  </div>
 </aside>
 
 <main id="map-wrap">
@@ -1917,6 +1974,7 @@ const KEYS = {
   lastProd: 'pm_lastprod_v1',
   customProducts: 'pm_products_custom_v1',
   ageOk: 'pm_age_ok_v1',
+  lastCat: 'pm_lastcat_v1',
   demo2: 'pm_demo_categories_v1',
 };
 function load(key, fallback) {
@@ -2376,7 +2434,7 @@ function hot(id, on) {
 
 // ── Views ────────────────────────────────────────────────────────
 function showView(name) {
-  for (const v of ['list', 'store', 'new']) $('#view-' + v).hidden = v !== name;
+  for (const v of ['list', 'store', 'new', 'product']) $('#view-' + v).hidden = v !== name;
   $('#view-' + name).scrollTop = 0;
 }
 // "Cheapest" only makes sense when one product is chosen
@@ -3080,7 +3138,7 @@ function renderSuggest() {
 
   let html = '';
   if (!matches.length) {
-    html = `<li class="sug-empty">Nothing matches “${esc(q)}”${filters.cat ? ` in ${CATEGORIES[filters.cat].label.toLowerCase()}` : ''}. Check the spelling, or add it from a store's page with <b>Not listed?</b></li>`;
+    html = `<li class="sug-empty">Nothing matches “${esc(q)}”${filters.cat ? ` in ${CATEGORIES[filters.cat].label.toLowerCase()}` : ''}. Check the spelling, or add it as a new product.</li>`;
   } else if (q) {
     if (matches.length > 1) {
       const ids = new Set(matches.map(p => p.id));
@@ -3098,6 +3156,7 @@ function renderSuggest() {
       if (inCat.length) html += head(cat) + inCat.map(product).join('');
     }
   }
+  html += option({ add: true, q }, q && !matches.length ? `+ Add “${esc(q)}” as a new product` : '+ Add a new product', ' sug-add');
   suggestEl.innerHTML = html;
   suggestEl.hidden = false;
   searchInput.setAttribute('aria-expanded', 'true');
@@ -3134,6 +3193,7 @@ function fitToResults() {
   map.fitBounds(L.latLngBounds(vis.map(v => [v.s.lat, v.s.lng])), { padding: [80, 80], maxZoom: 15, animate: !reduceMotion });
 }
 function choose(item) {
+  if (item.add) { openAddProduct(item.q); return; }
   if (item.ids.length === 1) {
     searchInput.value = item.label;
     const p = PROD.get(item.ids[0]);
@@ -3177,6 +3237,160 @@ $('#f-clear').onclick = () => {
   setSearch(null, '');
   closeSuggest();
 };
+
+// ── Add a product ────────────────────────────────────────────────
+let apCat = 'beer';
+$('#ap-cat').innerHTML = CAT_ORDER.map(c =>
+  `<label><input type="radio" name="ap-cat" value="${c}"><span>${catIcon(c, 'sm')}${CATEGORIES[c].chip}</span></label>`).join('');
+
+function setApCat(cat) {
+  apCat = cat;
+  const c = CATEGORIES[cat];
+  document.querySelector(`input[name="ap-cat"][value="${cat}"]`).checked = true;
+  $('#ap-brands').innerHTML = [...new Set(PRODUCTS.filter(p => p.cat === cat).map(p => p.brand))]
+    .map(b => `<option value="${esc(b)}">`).join('');
+  $('#ap-brand').placeholder = `e.g. ${c.ex.brand}`;
+  $('#ap-name').placeholder = `e.g. ${c.ex.name}`;
+  $('#ap-size').placeholder = `e.g. ${c.ex.size}`;
+  $('#ap-size-label').textContent = cat === 'pouch' ? 'Strength' : 'Size';
+  $('#ap-sizes').innerHTML = c.sizes.map(s => `<button type="button" class="size-chip" data-size="${esc(s)}">${esc(s)}</button>`).join('');
+  updateApPreview();
+}
+const apDraft = () => ({
+  cat: apCat,
+  brand: cleanText($('#ap-brand').value),
+  name: cleanText($('#ap-name').value),
+  size: normSize(apCat, $('#ap-size').value),
+});
+function updateApPreview() {
+  const d = apDraft();
+  const label = [d.brand, d.name, d.size].filter(Boolean).join(' ');
+  $('#ap-preview').innerHTML = label
+    ? `Will be listed under ${CATEGORIES[d.cat].label} as <b>${esc(label)}</b>`
+    : `Fill in the brand and ${d.cat === 'pouch' ? 'strength' : 'size'} to see how it will be listed.`;
+  $('#ap-sizes').querySelectorAll('.size-chip').forEach(b => {
+    const on = b.dataset.size.toLowerCase() === d.size.toLowerCase();
+    b.classList.toggle('on', on);
+    b.setAttribute('aria-pressed', String(on));
+  });
+}
+// Opens the form, splitting typed text like "zyn peppermint" into a known brand and the rest
+function openAddProduct(prefill = '') {
+  if (view === 'new') endAdd();
+  view = 'product';
+  currentId = null;
+  closeSuggest();
+  $('#product-form').reset();
+  $('#ap-error').hidden = true;
+  let brand = cleanText(prefill);
+  let name = '';
+  const lower = brand.toLowerCase();
+  const known = [...new Set(PRODUCTS.map(p => p.brand))]
+    .sort((a, b) => b.length - a.length)
+    .find(b => lower === b.toLowerCase() || lower.startsWith(b.toLowerCase() + ' '));
+  const titleCase = s => s.replace(/(^|\s)(\S)/g, (m, sp, ch) => sp + ch.toUpperCase());
+  if (known) { name = titleCase(brand.slice(known.length).trim()); brand = known; }
+  else brand = titleCase(brand);
+  $('#ap-brand').value = brand;
+  $('#ap-name').value = name;
+  const knownCat = known && PRODUCTS.find(p => p.brand === known).cat;
+  setApCat(filters.cat || knownCat || load(KEYS.lastCat, 'beer'));
+  renderMine();
+  showView('product');
+  renderMarkers();
+  (brand ? $('#ap-name') : $('#ap-brand')).focus();
+}
+function renderMine() {
+  const el = $('#ap-mine');
+  if (!customProducts.length) { el.hidden = true; return; }
+  const counts = new Map();
+  for (const s of stores) for (const { cur } of latestPrices(s.id)) counts.set(cur.prodId, (counts.get(cur.prodId) || 0) + 1);
+  const mine = [...customProducts].sort((a, b) =>
+    (CAT_ORDER.indexOf(a.cat) - CAT_ORDER.indexOf(b.cat)) || prodName(a.id).localeCompare(prodName(b.id)));
+  el.innerHTML = `<h3>Products you added <span class="muted">${mine.length}</span></h3>
+    <ul class="mine">${mine.map(p => {
+      const n = counts.get(p.id) || 0;
+      return `<li>${catIcon(p.cat)}
+        <div class="prow-main">
+          <div class="prow-name"><b>${esc(p.brand)}</b> ${esc(p.name)}</div>
+          <div class="prow-meta">${esc(p.size)} · ${n ? `listed at ${plural(n, 'store')}` : 'no prices yet'}</div>
+        </div>
+        <button class="icon-btn" type="button" data-del="${p.id}" aria-label="Delete ${esc(prodName(p.id))}" title="Delete this product">×</button>
+      </li>`;
+    }).join('')}</ul>`;
+  el.hidden = false;
+}
+function deleteProduct(id) {
+  const p = customProducts.find(x => x.id === id);
+  if (!p) return;
+  const label = prodName(id);
+  const theirPrices = prices.filter(x => x.prodId === id);
+  const persistAll = () => { save(KEYS.customProducts, customProducts); persist(); rebuildCatalog(); };
+  customProducts = customProducts.filter(x => x.id !== id);
+  prices = prices.filter(x => x.prodId !== id);
+  persistAll();
+  if (filters.products && filters.products.has(id)) {
+    searchInput.value = '';
+    filters.products = null;
+    filters.label = '';
+    $('#f-clear').hidden = true;
+  }
+  renderMine();
+  refresh();
+  toast(theirPrices.length ? `Deleted ${label} and its ${plural(theirPrices.length, 'price')}` : `Deleted ${label}`, {
+    label: 'Undo',
+    fn: () => {
+      customProducts.push(p);
+      prices.push(...theirPrices);
+      persistAll();
+      if (view === 'product') renderMine();
+      refresh();
+    },
+  });
+}
+
+$('#add-product-link').onclick = () => openAddProduct(singleProduct() ? '' : searchInput.value.trim());
+$('#ap-back').onclick = showList;
+$('#ap-cat').addEventListener('change', e => setApCat(e.target.value));
+$('#ap-sizes').addEventListener('click', e => {
+  const b = e.target.closest('.size-chip');
+  if (!b) return;
+  $('#ap-size').value = b.dataset.size;
+  $('#ap-error').hidden = true;
+  updateApPreview();
+});
+$('#product-form').addEventListener('input', e => {
+  if (e.target.name === 'ap-cat') return;
+  $('#ap-error').hidden = true;
+  updateApPreview();
+});
+$('#ap-mine').addEventListener('click', e => {
+  const b = e.target.closest('[data-del]');
+  if (b) deleteProduct(+b.dataset.del);
+});
+$('#product-form').addEventListener('submit', e => {
+  e.preventDefault();
+  const d = apDraft();
+  const ex = CATEGORIES[d.cat].ex;
+  const fail = (msg, input) => {
+    $('#ap-error').textContent = msg;
+    $('#ap-error').hidden = false;
+    input.focus();
+  };
+  if (!d.brand) return fail(`Enter the brand, like ${ex.brand}.`, $('#ap-brand'));
+  if (!d.size) return fail(`Enter the ${d.cat === 'pouch' ? 'strength' : 'size'}, like ${ex.size}.`, $('#ap-size'));
+  const added = addProduct(d);
+  const label = prodName(added.id);
+  save(KEYS.lastProd, added.id);
+  save(KEYS.lastCat, d.cat);
+  // Show the product in the search so its stores (none yet) are listed and the price form starts on it
+  searchInput.value = label;
+  filters.cat = null;
+  setSearch([added.id], label, true);
+  toast(added.existed
+    ? `${label} was already listed, so it's selected for you.`
+    : `Added ${label}. Open a store to add its price.`, null, 5000);
+});
 
 // ── Filters ──────────────────────────────────────────────────────
 $('#cat-chips').innerHTML =
